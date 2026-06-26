@@ -1,6 +1,8 @@
 [submodule "hpctoolkit"]
 	path = hpctoolkit
-	url = https://github.com/HPCToolkit/hpctoolkit.git
+	url = https://github.com/anthonyramirez244/hpctoolkit.git
+	branch = gpa-compat
 [submodule "GPA-Benchmark"]
 	path = GPA-Benchmark
-	url = https://github.com/Jokeren/GPA-Benchmark.git
+	url = https://github.com/anthonyramirez244/GPA-Benchmark.git
+	branch = gpa-compat
