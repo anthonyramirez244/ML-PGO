@@ -35,5 +35,17 @@
     },
     "kernels": ["Fan1(", "Fan2("],
     "sourceFiles": ["gaussian.cu"]
+  },
+  "hotspot": {
+    "dir": "GPA-Benchmark/rodinia/hotspot",
+    "buildCmd": ["make"],
+    "runCmd": ["./hotspot", "512", "2", "2", "../../data/hotspot/temp_512", "../../data/hotspot/power_512", "output.out"],
+    "runs": 3,
+    "correctness": {
+      "mode": "output-diff",
+      "outputFile": "output.out"
+    },
+    "kernels": ["calculate_temp"],
+    "sourceFiles": ["hotspot.cu"]
   }
 }
