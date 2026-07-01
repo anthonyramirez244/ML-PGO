@@ -47,5 +47,17 @@
     },
     "kernels": ["calculate_temp"],
     "sourceFiles": ["hotspot.cu"]
+  },
+  "kmeans": {
+    "dir": "GPA-Benchmark/rodinia/kmeans",
+    "buildCmd": ["make"],
+    "runCmd": ["./kmeans", "-o", "-i", "../../data/kmeans/kdd_cup"],
+    "runs": 3,
+    "correctness": {
+      "mode": "stdout-diff",
+      "ignorePatterns": []
+    },
+    "kernels": ["kmeansPoint"],
+    "sourceFiles": ["kmeans_cuda_kernel.cu", "kmeans_cuda.cu"]
   }
 }
