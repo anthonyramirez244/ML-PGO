@@ -1,0 +1,27 @@
+{
+  "bfs": {
+    "dir": "GPA-Benchmark/rodinia/bfs",
+    "buildCmd": ["make"],
+    "runCmd": ["./bfs", "../../data/bfs/graph1MW_6.txt"],
+    "runs": 3,
+    "correctness": {
+      "mode": "output-diff",
+      "outputFile": "result.txt"
+    },
+    "kernels": ["Kernel(", "Kernel2("],
+    "sourceFiles": ["kernel.cu", "kernel2.cu"]
+  },
+  "huffman": {
+    "dir": "GPA-Benchmark/rodinia/huffman",
+    "buildCmd": ["make"],
+    "runCmd": ["./pavle", "../../data/huffman/test1024_H2.206587175259.in"],
+    "runs": 3,
+    "correctness": {
+      "mode": "stdout-marker",
+      "passPattern": "PASS! vectors are matching!",
+      "failPattern": "FAIL! vectors are NOT matching!"
+    },
+    "kernels": ["vlc_encode_kernel_sm64huff"],
+    "sourceFiles": ["vlc_kernel_sm64huff.cu"]
+  }
+}
