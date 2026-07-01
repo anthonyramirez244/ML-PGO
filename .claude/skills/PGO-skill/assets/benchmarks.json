@@ -71,5 +71,17 @@
     },
     "kernels": ["lud_diagonal", "lud_perimeter", "lud_internal"],
     "sourceFiles": ["cuda/lud_kernel.cu"]
+  },
+  "nw": {
+    "dir": "GPA-Benchmark/rodinia/nw",
+    "buildCmd": ["make"],
+    "runCmd": ["./needle", "2048", "10"],
+    "runs": 3,
+    "correctness": {
+      "mode": "output-diff",
+      "outputFile": "result.txt"
+    },
+    "kernels": ["needle_cuda_shared_1", "needle_cuda_shared_2"],
+    "sourceFiles": ["needle_kernel.cu"]
   }
 }
