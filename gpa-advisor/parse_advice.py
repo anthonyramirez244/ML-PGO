@@ -17,6 +17,7 @@ DASHES_RE = re.compile(r"^-{5,}\s*$")
 STARS_RE = re.compile(r"^\*{5,}\s*$")
 NUMBERED_BLAME_RE = re.compile(r"^\s*\d+\.\s*Hot BLAME")
 NESTED_BLAME_RE = re.compile(r"^\s*Hot BLAME")
+BLAME_RATIO_RE = re.compile(r"Hot BLAME \S+ code, ratio ([\d.]+)%")
 ADJUST_RE = re.compile(r"^\s*Adjust ")
 
 
@@ -43,14 +44,21 @@ def parse_kernel_blocks(text: str):
     cur_section = None
     cur_entry = None
     pending_file = None
+    cur_blame_ratio = None  # ratio of the innermost "Hot BLAME ... ratio X%" line
+                              # currently in scope -- governs the location(s) that
+                              # follow, until the next Hot BLAME line updates it
 
     def flush_entry():
         nonlocal cur_entry
         if cur_entry is not None and cur_block is not None:
             cur_entry["description"] = " ".join(cur_entry["description_lines"]).strip()
             del cur_entry["description_lines"]
+            # highest-contributing location first -- the parser previously sorted
+            # by (file, line), which does NOT correlate with which location is
+            # actually responsible for the most stall cycles within this finding
             cur_entry["locations"] = sorted(
-                cur_entry["locations"], key=lambda loc: (loc["file"], loc["line"])
+                cur_entry["locations"],
+                key=lambda loc: (-(loc.get("ratio") or 0.0), loc["file"], loc["line"]),
             )
             cur_block["entries"].append(cur_entry)
         cur_entry = None
@@ -84,9 +92,15 @@ def parse_kernel_blocks(text: str):
                 "locations": [],
             }
             pending_file = None
+            cur_blame_ratio = None
             continue
 
         if cur_entry is None:
+            continue
+
+        m = BLAME_RATIO_RE.search(line)
+        if m:
+            cur_blame_ratio = float(m.group(1))
             continue
 
         m = FROM_TO_RE.match(line)
@@ -99,6 +113,8 @@ def parse_kernel_blocks(text: str):
             loc = {"file": pending_file, "line": int(m.group(1))}
             if m.group(2):
                 loc["loopLine"] = int(m.group(2))
+            if cur_blame_ratio is not None:
+                loc["ratio"] = cur_blame_ratio
             cur_entry["locations"].append(loc)
             continue
 
