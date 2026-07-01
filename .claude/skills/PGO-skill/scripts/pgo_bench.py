@@ -30,9 +30,13 @@ QDSTRM_IMPORTER_CANDIDATES = [
     "/opt/nvidia/nsight-systems/*/host-linux-x64/QdstrmImporter",
 ]
 
-RUN_TIMEOUT_SECONDS = 60  # generous vs. these benchmarks' normal ~1-5s runtime; a bad
-                          # edit (e.g. a broken loop-termination condition) can hang the
-                          # binary forever, so every run must be bounded.
+DEFAULT_RUN_TIMEOUT_SECONDS = 60  # generous vs. most benchmarks' ~1-5s runtime; a bad edit
+                                  # (e.g. a broken loop-termination condition) can hang the
+                                  # binary forever, so every run must be bounded. Slower
+                                  # benchmarks (e.g. cfd, ~35s/run) should set their own
+                                  # "runTimeoutSeconds" in benchmarks.json -- otherwise a
+                                  # legitimately-slower-but-finite run after an edit could
+                                  # get misclassified as a hang.
 
 
 class BenchmarkTimeout(Exception):
@@ -58,6 +62,7 @@ def build(cfg: dict) -> None:
 
 def timed_runs(cfg: dict) -> tuple[float, str]:
     """Run the benchmark N times, return (median wall-clock seconds, last run's stdout)."""
+    timeout = cfg.get("runTimeoutSeconds", DEFAULT_RUN_TIMEOUT_SECONDS)
     times = []
     last_stdout = ""
     for _ in range(cfg.get("runs", 3)):
@@ -65,11 +70,11 @@ def timed_runs(cfg: dict) -> tuple[float, str]:
         try:
             result = subprocess.run(
                 cfg["runCmd"], cwd=cfg["path"], capture_output=True, text=True,
-                timeout=RUN_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             raise BenchmarkTimeout(
-                f"run did not finish within {RUN_TIMEOUT_SECONDS}s "
+                f"run did not finish within {timeout}s "
                 f"(likely an infinite loop or broken termination condition introduced by the edit)"
             )
         elapsed = time.perf_counter() - start
@@ -175,23 +180,39 @@ def check_correctness(cfg: dict, gpa_db_dir: Path, is_baseline: bool, run_stdout
         return "UNKNOWN", "neither pass nor fail marker found in stdout"
 
     if mode == "output-diff":
-        output_file = cfg["path"] / cfg["correctness"]["outputFile"]
-        golden_file = gpa_db_dir / f"pgo-baseline-output-{cfg['correctness']['outputFile']}"
-        if not output_file.exists():
-            return "UNKNOWN", f"expected output file missing: {output_file}"
+        # accepts either a single "outputFile" (existing configs) or a list
+        # under "outputFiles" (for benchmarks that write more than one
+        # correctness-relevant file, e.g. cfd's density/momentum/density_energy)
+        names = cfg["correctness"].get("outputFiles")
+        if names is None:
+            names = [cfg["correctness"]["outputFile"]]
+
+        total_diffs = 0
+        details = []
+        for name in names:
+            output_file = cfg["path"] / name
+            golden_file = gpa_db_dir / f"pgo-baseline-output-{name}"
+            if not output_file.exists():
+                return "UNKNOWN", f"expected output file missing: {output_file}"
+            if is_baseline:
+                gpa_db_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(output_file, golden_file)
+                continue
+            if not golden_file.exists():
+                return "UNKNOWN", "no golden reference captured yet — run 'baseline' first"
+            current_lines = output_file.read_text().splitlines()
+            golden_lines = golden_file.read_text().splitlines()
+            if current_lines != golden_lines:
+                diffs = sum(1 for a, b in zip(current_lines, golden_lines) if a != b)
+                diffs += abs(len(current_lines) - len(golden_lines))
+                total_diffs += diffs
+                details.append(f"{name}: {diffs} differing/missing line(s)")
+
         if is_baseline:
-            gpa_db_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy(output_file, golden_file)
             return "PASS", "baseline output captured as golden reference"
-        if not golden_file.exists():
-            return "UNKNOWN", "no golden reference captured yet — run 'baseline' first"
-        current_lines = output_file.read_text().splitlines()
-        golden_lines = golden_file.read_text().splitlines()
-        if current_lines == golden_lines:
-            return "PASS", "output matches golden reference exactly"
-        diffs = sum(1 for a, b in zip(current_lines, golden_lines) if a != b)
-        diffs += abs(len(current_lines) - len(golden_lines))
-        return "FAIL", f"{diffs} differing/missing line(s) vs golden reference"
+        if total_diffs == 0:
+            return "PASS", "output matches golden reference exactly" if len(names) == 1 else f"all {len(names)} output files match golden reference exactly"
+        return "FAIL", "; ".join(details) + " vs golden reference"
 
     if mode == "stdout-diff":
         # golden reference is stored as JSON (not newline-joined text) because
