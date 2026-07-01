@@ -73,3 +73,13 @@ Every finding's `locations` array (in the parser's JSON output) gives real `{fil
 Always `Read` the actual file at that line before proposing or applying a fix — never describe
 code you have not read. The absolute paths in `gpa.advice` already point at the real `.cu` files
 in this repo (e.g. `GPA-Benchmark/rodinia/bfs/kernel.cu`).
+
+**`locations[0]` is the highest-contributing line within the finding**, not just the first one
+encountered in the raw text. Each location carries a `ratio` field (the innermost `Hot BLAME ...
+ratio X%` line that governs it) and `parse_advice.py` sorts locations by that ratio descending
+before output. (This was a real bug until it was fixed while working on `lud`: the parser
+originally sorted by `(file, line)`, which surfaced an 82.2%-ratio finding's minor contributing
+line first while the true dominant blame -- individually worth more than the next several combined
+-- was several `Hot BLAME` sub-entries later. Fixed by tracking each location's own governing
+ratio during parsing instead of just file/line.) A `locations` entry can still lack a `ratio` if it
+appeared outside any `Hot BLAME` block (rare) -- those sort last.
