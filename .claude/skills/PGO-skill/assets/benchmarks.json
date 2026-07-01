@@ -59,5 +59,17 @@
     },
     "kernels": ["kmeansPoint"],
     "sourceFiles": ["kmeans_cuda_kernel.cu", "kmeans_cuda.cu"]
+  },
+  "lud": {
+    "dir": "GPA-Benchmark/rodinia/lud",
+    "buildCmd": ["make"],
+    "runCmd": ["./cuda/lud_cuda", "-s", "256", "-v"],
+    "runs": 3,
+    "correctness": {
+      "mode": "stdout-diff",
+      "ignorePatterns": ["Time consumed"]
+    },
+    "kernels": ["lud_diagonal", "lud_perimeter", "lud_internal"],
+    "sourceFiles": ["cuda/lud_kernel.cu"]
   }
 }
