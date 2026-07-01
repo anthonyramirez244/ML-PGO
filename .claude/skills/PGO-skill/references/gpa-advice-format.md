@@ -47,7 +47,7 @@ correspond to `estimate speedup infx` in the raw text (occupancy-increase sugges
 have no ratio-weighted evidence and are reported separately as "informational," not ranked
 alongside the real findings.
 
-## The optimizer categories (16 confirmed so far)
+## The optimizer categories (17 confirmed so far)
 
 | Category | Optimizer | Meaning |
 |---|---|---|
@@ -63,6 +63,7 @@ alongside the real findings.
 | Code | `GPUFunctionSplitOptimizer` | Function too large/divergent, consider splitting |
 | Code | `GPUIndirectAddressEliminationOptimizer` | Indirect addressing overhead that could be made direct |
 | Code | `GPUFastMathOptimizer` | Precise math intrinsic used where a faster, less-precise one (`--use_fast_math` equivalents) would do |
+| Code | `GPUFunctionInlineOptimizer` | Function call overhead not eliminated by the compiler; consider forcing inline |
 | Parallel | `GPUOccupancyIncreaseOptimizer` / `...DecreaseOptimizer` | Active-warp count too low/high for the SM |
 | Parallel | `GPUBlockIncreaseOptimizer` / `...DecreaseOptimizer` | Block/grid sizing suggestion |
 | Binary | `GPURegisterIncreaseOptimizer` | Register pressure causing spills; simplify or split to free registers |
