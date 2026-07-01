@@ -193,6 +193,30 @@ def check_correctness(cfg: dict, gpa_db_dir: Path, is_baseline: bool, run_stdout
         diffs += abs(len(current_lines) - len(golden_lines))
         return "FAIL", f"{diffs} differing/missing line(s) vs golden reference"
 
+    if mode == "stdout-diff":
+        # golden reference is stored as JSON (not newline-joined text) because
+        # "\n".join(lines) does not round-trip symmetrically through .splitlines()
+        # when `lines` has trailing empty strings -- that mismatch previously
+        # produced a false-positive FAIL on output that was actually identical.
+        ignore_patterns = cfg["correctness"].get("ignorePatterns", [])
+        golden_file = gpa_db_dir / "pgo-baseline-stdout.json"
+        current_lines = [
+            line for line in run_stdout.splitlines()
+            if not any(pat in line for pat in ignore_patterns)
+        ]
+        if is_baseline:
+            gpa_db_dir.mkdir(parents=True, exist_ok=True)
+            golden_file.write_text(json.dumps(current_lines))
+            return "PASS", "baseline stdout captured as golden reference"
+        if not golden_file.exists():
+            return "UNKNOWN", "no golden reference captured yet — run 'baseline' first"
+        golden_lines = json.loads(golden_file.read_text())
+        if current_lines == golden_lines:
+            return "PASS", "stdout (minus ignored/non-deterministic lines) matches golden reference exactly"
+        diffs = sum(1 for a, b in zip(current_lines, golden_lines) if a != b)
+        diffs += abs(len(current_lines) - len(golden_lines))
+        return "FAIL", f"{diffs} differing/missing line(s) vs golden stdout reference"
+
     return "UNKNOWN", f"unrecognized correctness mode: {mode}"
 
 

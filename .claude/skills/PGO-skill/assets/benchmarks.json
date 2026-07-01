@@ -23,5 +23,17 @@
     },
     "kernels": ["vlc_encode_kernel_sm64huff"],
     "sourceFiles": ["vlc_kernel_sm64huff.cu"]
+  },
+  "gaussian": {
+    "dir": "GPA-Benchmark/rodinia/gaussian",
+    "buildCmd": ["make"],
+    "runCmd": ["./gaussian", "-f", "../../data/gaussian/matrix208.txt"],
+    "runs": 3,
+    "correctness": {
+      "mode": "stdout-diff",
+      "ignorePatterns": ["Time total", "Time for CUDA kernels"]
+    },
+    "kernels": ["Fan1(", "Fan2("],
+    "sourceFiles": ["gaussian.cu"]
   }
 }
