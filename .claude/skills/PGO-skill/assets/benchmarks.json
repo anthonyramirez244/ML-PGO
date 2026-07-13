@@ -95,5 +95,17 @@
     },
     "kernels": ["srad", "srad2", "extract", "prepare", "reduce", "compress"],
     "sourceFiles": ["srad_kernel.cu"]
+  },
+  "b+tree": {
+    "dir": "GPA-Benchmark/rodinia/b+tree",
+    "buildCmd": ["make"],
+    "runCmd": ["./b+tree.out", "file", "../../data/b+tree/mil.txt", "command", "../../data/b+tree/command.txt"],
+    "runs": 3,
+    "correctness": {
+      "mode": "output-diff",
+      "outputFile": "output.txt"
+    },
+    "kernels": ["findK", "findRangeK"],
+    "sourceFiles": ["kernel/kernel_gpu_cuda.cu", "kernel/kernel_gpu_cuda_2.cu"]
   }
 }
