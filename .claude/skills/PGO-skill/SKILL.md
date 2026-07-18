@@ -47,8 +47,14 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/pgo_bench.py baseline <benchmark>
 ### 2. Understand the profile
 
 ```
-python3 ${CLAUDE_SKILL_DIR}/scripts/parse_advice.py <benchmark-dir>/gpa-database/gpa.advice --top 5
+python3 ${CLAUDE_SKILL_DIR}/scripts/get_profile_summary.py <benchmark> --top 5
 ```
+
+This is a cached wrapper around `parse_advice.py`, keyed by `gpa.advice`'s content hash — on an
+unchanged profile it returns the same JSON without re-parsing 1500-4000 lines of raw advice text,
+and it persists the result to `<benchmark-dir>/gpa-database/profile-summary.json`. The cache is
+purely an accelerant: if the script is ever unavailable, run `parse_advice.py
+<benchmark-dir>/gpa-database/gpa.advice --top 5` directly instead — same output, just uncached.
 
 If the output format needs interpreting (optimizer meanings, how `Hot BLAME` locations map to
 source lines, the duplicate-kernel-block quirk), read
@@ -57,10 +63,18 @@ source lines, the duplicate-kernel-block quirk), read
 
 ### 3. Check the ledger before proposing anything
 
-If `<benchmark-dir>/gpa-database/pgo-ledger.md` exists, read it. Skip any finding already logged
-there as `REVERTED` for the same kernel + optimizer — don't re-attempt something already known not
-to work, and don't re-derive that decision by scanning conversation history. The ledger is the
-source of truth for what's already been tried.
+```
+python3 ${CLAUDE_SKILL_DIR}/scripts/build_ledger_index.py <benchmark>
+```
+
+Then `Read` the resulting `<benchmark-dir>/gpa-database/pgo-ledger-index.json` — an O(1)
+kernel+optimizer -> KEPT/REVERTED lookup derived from `pgo-ledger.md`, instead of reading the full
+ledger text every invocation. Skip any finding whose kernel+optimizer pair is already indexed as
+`REVERTED` — don't re-attempt something already known not to work, and don't re-derive that
+decision by scanning conversation history. `pgo-ledger.md` remains the source of truth; the index
+is always rebuilt from it and never hand-edited. If a ledger entry can't be attributed to a known
+kernel+optimizer pair (the script logs this to stderr when it happens), or if the index script is
+ever unavailable, fall back to reading `pgo-ledger.md` directly rather than skipping the check.
 
 ### 4. Locate and analyze
 
@@ -124,9 +138,17 @@ measured local (kernel) speedup and end-to-end speedup, and the decision you log
 
 - `scripts/run_gpa_profile.py` — runs the full `hpcrun -> hpcstruct -> hpcprof` pipeline for a
   benchmark and (re)writes `gpa-database/gpa.advice`, merging its output into `gpa-database/`
-  without touching the ledger/baseline files that also live there.
+  without touching the ledger/baseline files that also live there. Each subprocess's full output
+  is captured to `gpa-database/pipeline-logs/<n>-<step>.log`; only a one-line pass/fail per step
+  (plus the log tail on failure) is printed.
 - `scripts/parse_advice.py` — parses/dedupes/ranks `gpa.advice` into JSON (see
   [references/gpa-advice-format.md](references/gpa-advice-format.md) for the format it reads).
+- `scripts/get_profile_summary.py` — cached wrapper around `parse_advice.py`, keyed by
+  `gpa.advice`'s content hash; persists to `gpa-database/profile-summary.json`. Optional
+  accelerant, not a hard dependency — falls back cleanly to calling `parse_advice.py` directly.
+- `scripts/build_ledger_index.py` — derives `gpa-database/pgo-ledger-index.json` (a
+  kernel+optimizer -> KEPT/REVERTED lookup) from `pgo-ledger.md`, keyed by the ledger's content
+  hash. Optional accelerant, not a hard dependency — `pgo-ledger.md` remains the source of truth.
 - `scripts/pgo_bench.py` — builds, runs (median of N for end-to-end wall-clock), profiles with
   `nsys` for per-kernel time, checks correctness (stdout marker or output-file diff, per
   `assets/benchmarks.json`), and computes speedups. `baseline` captures reference state;

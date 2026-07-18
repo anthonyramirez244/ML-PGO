@@ -1,0 +1,36 @@
+{
+  "measuredAgainst": "bfs (the only rodinia benchmark with both a real gpa.advice and a real pgo-ledger.md entry to measure against)",
+  "note": "Two measurement approaches are reported, not blended into one number. The controlled, per-artifact measurements below are the real signal for this change; the ccusage whole-session numbers are included because item 5 explicitly asked for them, but they are not usable as a before/after ratio for this specific change -- see ccusageWholeSession.caveat.",
+
+  "controlledMeasurements": {
+    "pipelineLogCapture": {
+      "description": "run_gpa_profile.py's Bash-tool-visible stdout+stderr for one bfs profile regen, old (uncaptured) vs new (captured to gpa-database/pipeline-logs/, summary only)",
+      "before": { "lines": 26, "chars": 2413 },
+      "after": { "lines": 11, "chars": 1513 },
+      "charCompressionRatio": 1.595,
+      "caveat": "bfs is one of the quieter benchmarks on this box; the fix bounds worst-case output regardless of benchmark size, so the ratio will be larger on more verbose benchmarks (e.g. heartwall, noted elsewhere in project history as slow/verbose) -- not measured here."
+    },
+    "profileSummaryCache": {
+      "description": "what an agent reads to understand a profile: raw gpa.advice vs profile-summary.json (top 5 findings), for the same bfs profile",
+      "before": { "source": "gpa.advice", "lines": 3420, "chars": 272361 },
+      "after": { "source": "profile-summary.json", "lines": 408, "chars": 15070 },
+      "charCompressionRatio": 18.07,
+      "caveat": "This is the ratio IF the raw file would otherwise have been read directly. In normal SKILL.md step-2 use, parse_advice.py --top 5 already avoided dumping the full raw file -- the cache's real win is avoiding re-running that parse at all on repeat reads within a session, and giving a small persistent artifact instead of the raw file for ad hoc double-checks."
+    },
+    "ledgerIndexCache": {
+      "description": "pgo-ledger.md vs pgo-ledger-index.json, for bfs's single existing ledger entry",
+      "before": { "source": "pgo-ledger.md", "lines": 13, "chars": 1128 },
+      "after": { "source": "pgo-ledger-index.json", "lines": 15, "chars": 512 },
+      "charCompressionRatio": 2.20,
+      "caveat": "Roughly a wash on line count for a 1-entry ledger -- the real payoff is structural, not visible yet: pgo-ledger.md grows without bound (one block per attempt, forever), while pgo-ledger-index.json's size is bounded by the number of distinct kernel+optimizer pairs, which is small and fixed per benchmark. The gap will widen as more optimization attempts accumulate."
+    }
+  },
+
+  "ccusageWholeSession": {
+    "invocation": "npx ccusage session --json",
+    "before": { "label": "phase1-baseline", "totalTokensAllSessions": 605363514, "sessionCount": 20 },
+    "after": { "label": "phase1-after", "totalTokensAllSessions": 609682244, "sessionCount": 20 },
+    "rawDelta": 4318730,
+    "caveat": "ccusage has no per-project filter -- both numbers sum every Claude Code session on this machine (20 sessions spanning unrelated work: Halo, portfolio, this planning conversation itself, etc.), not just PGO-skill work. The ~4.3M token delta between snapshots is dominated by this very conversation continuing, not by anything the Phase 1 changes did or didn't do. Reported here because item 5 asked for the ccusage measurement explicitly, but this number should not be read as a before/after ratio for these changes -- see reports/token-usage-phase1-baseline.json and reports/token-usage-phase1-after.json for the raw session lists this was computed from."
+  }
+}

@@ -68,6 +68,29 @@ alongside the real findings.
 | Parallel | `GPUBlockIncreaseOptimizer` / `...DecreaseOptimizer` | Block/grid sizing suggestion |
 | Binary | `GPURegisterIncreaseOptimizer` | Register pressure causing spills; simplify or split to free registers |
 
+## Cached derivatives (profile-summary.json, pgo-ledger-index.json)
+
+Two files in `gpa-database/` cache expensive-to-regenerate views of `gpa.advice`/`pgo-ledger.md`,
+written by `scripts/get_profile_summary.py` and `scripts/build_ledger_index.py` respectively.
+Both are strictly optional accelerants, never a source of truth:
+
+- `profile-summary.json` — exactly `parse_advice.py`'s JSON shape (`sourceFile`,
+  `kernelBlockCount`, `findings`, `informational`), plus `sourceHash` (a sha256 of the `gpa.advice`
+  text it was generated from) and `top` (the `--top` value used). If `sourceHash` doesn't match
+  the current `gpa.advice`, the cache is stale and `get_profile_summary.py` regenerates it
+  automatically — never trust a `profile-summary.json` whose `sourceHash` you haven't checked.
+- `pgo-ledger-index.json` — `{sourceFile, sourceHash, index: {kernel: {optimizer: {decision,
+  lastUpdated}}}}`, where `decision` is `"KEPT"` or `"REVERTED"`. `sourceHash` is a sha256 of
+  `pgo-ledger.md`'s text. An entry only appears here if `build_ledger_index.py` could confidently
+  attribute it to a specific kernel (checked against `assets/benchmarks.json`'s `kernels` list for
+  that benchmark) and optimizer (matched via a `GPU\w+Optimizer` pattern in the entry's text) —
+  ambiguous entries are skipped rather than indexed incorrectly, and remain readable directly in
+  `pgo-ledger.md`.
+
+If either cache file is missing, deleted, or looks wrong, delete it and re-run the corresponding
+script (or read the raw `gpa.advice`/`pgo-ledger.md` directly) — both scripts regenerate cleanly
+from source and neither `SKILL.md` step depends on the cache surviving.
+
 ## Correlating to real source
 
 Every finding's `locations` array (in the parser's JSON output) gives real `{file, line}` pairs.

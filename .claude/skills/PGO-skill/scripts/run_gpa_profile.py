@@ -4,9 +4,13 @@ and (re)produce <benchmark-dir>/gpa-database/gpa.advice.
 
 This replaces the manual, multi-command pipeline previously run by hand for
 every benchmark/iteration (see CLAUDE.md's now-obsolete "manual pipeline"
-block). Every subprocess streams straight to the terminal -- never captured
-and hidden -- the same class of visibility bug that made bench.py's swallowed
-stdout/stderr useless for debugging hpcrun/hpcstruct/hpcprof failures.
+block). Every subprocess's full stdout/stderr is captured to a log file on
+disk (<benchmark-dir>/gpa-database/pipeline-<step>.log) -- never silently
+swallowed the way bench.py's captured output was (that bug made
+hpcrun/hpcstruct/hpcprof failures undebuggable). Only a one-line pass/fail
+per step, plus the log tail on failure, is printed to the caller -- avoiding
+the opposite problem of dumping potentially large, unbounded subprocess
+output straight into an agent's context on every single profile regen.
 
 Usage: run_gpa_profile.py <benchmark>
 """
@@ -37,6 +41,8 @@ STRUCT_PROF_TIMEOUT_SECONDS = 900  # hpcstruct/hpcprof can be slow on larger bin
                                     # here (e.g. the boost double-load recursive-mutex
                                     # deadlock found earlier in this project) should
                                     # not block the skill forever.
+LOG_TAIL_LINES = 40  # enough to see the actual error without dumping a whole
+                      # possibly-unbounded subprocess log into the caller's context
 
 
 class PipelineError(Exception):
@@ -54,17 +60,27 @@ def load_benchmark(name: str) -> dict:
     return cfg
 
 
-def run(cmd: list, cwd: Path, env: dict, timeout: float | None = None) -> None:
-    print(f"+ {' '.join(str(c) for c in cmd)}", file=sys.stderr)
-    try:
-        result = subprocess.run(cmd, cwd=cwd, env=env, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise PipelineError(
-            f"'{cmd[0]}' did not finish within {timeout}s -- likely hung "
-            f"(see STRUCT_PROF_TIMEOUT_SECONDS / MIN_PROFILE_RUN_TIMEOUT_SECONDS comments)"
-        )
+def run(cmd: list, cwd: Path, env: dict, log_path: Path, timeout: float | None = None) -> None:
+    print(f"+ {' '.join(str(c) for c in cmd)}  (log: {log_path})", file=sys.stderr)
+    with open(log_path, "w") as log_file:
+        try:
+            result = subprocess.run(
+                cmd, cwd=cwd, env=env, timeout=timeout, stdout=log_file, stderr=subprocess.STDOUT
+            )
+        except subprocess.TimeoutExpired:
+            raise PipelineError(
+                f"'{cmd[0]}' did not finish within {timeout}s -- likely hung "
+                f"(see STRUCT_PROF_TIMEOUT_SECONDS / MIN_PROFILE_RUN_TIMEOUT_SECONDS comments). "
+                f"Partial output in {log_path}"
+            )
     if result.returncode != 0:
-        raise PipelineError(f"'{cmd[0]}' exited {result.returncode}")
+        lines = log_path.read_text(errors="replace").splitlines()
+        tail = "\n".join(lines[-LOG_TAIL_LINES:])
+        raise PipelineError(
+            f"'{cmd[0]}' exited {result.returncode}. Last {min(len(lines), LOG_TAIL_LINES)} "
+            f"lines of {log_path}:\n{tail}"
+        )
+    print(f"  ok", file=sys.stderr)
 
 
 def main():
@@ -93,6 +109,7 @@ def main():
     hpcstruct_file = path / f"{binary}.hpcstruct"
     gpa_db_dir = path / "gpa-database"
     tmp_db_dir = path / "gpa-database-tmp"
+    log_dir = gpa_db_dir / "pipeline-logs"
 
     # Only clear the pipeline's own intermediates -- gpa-database also holds
     # pgo_bench.py's pgo-baseline.json / pgo-ledger.md / pgo-baseline-output-*,
@@ -101,23 +118,25 @@ def main():
     shutil.rmtree(measurements_dir, ignore_errors=True)
     hpcstruct_file.unlink(missing_ok=True)
     shutil.rmtree(tmp_db_dir, ignore_errors=True)
+    shutil.rmtree(log_dir, ignore_errors=True)
+    log_dir.mkdir(parents=True)
 
     try:
         run(
             ["hpcrun", "-e", "gpu=nvidia,pc", "-o", str(measurements_dir), f"./{binary}", *args],
-            cwd=path, env=env, timeout=run_timeout,
+            cwd=path, env=env, log_path=log_dir / "1-hpcrun.log", timeout=run_timeout,
         )
         run(
             ["hpcstruct", "--gpu-size", "100000", "--gpucfg", "yes", "-j", "4", str(measurements_dir)],
-            cwd=path, env=env, timeout=STRUCT_PROF_TIMEOUT_SECONDS,
+            cwd=path, env=env, log_path=log_dir / "2-hpcstruct-measurements.log", timeout=STRUCT_PROF_TIMEOUT_SECONDS,
         )
         run(
             ["hpcstruct", "--gpu-size", "100000", "-j", "4", f"./{binary}", "-o", str(hpcstruct_file)],
-            cwd=path, env=env, timeout=STRUCT_PROF_TIMEOUT_SECONDS,
+            cwd=path, env=env, log_path=log_dir / "3-hpcstruct-binary.log", timeout=STRUCT_PROF_TIMEOUT_SECONDS,
         )
         run(
             ["hpcprof", "--gpu-arch", gpu_arch, "-S", str(hpcstruct_file), "-o", str(tmp_db_dir), str(measurements_dir)],
-            cwd=path, env=env, timeout=STRUCT_PROF_TIMEOUT_SECONDS,
+            cwd=path, env=env, log_path=log_dir / "4-hpcprof.log", timeout=STRUCT_PROF_TIMEOUT_SECONDS,
         )
     except PipelineError as e:
         sys.exit(f"GPA pipeline failed for {name}: {e}")
