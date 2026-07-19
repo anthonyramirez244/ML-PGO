@@ -1,6 +1,6 @@
 ---
 name: PGO-skill
-description: Analyzes GPA (GPU Performance Advisor) gpa.advice profiler output, locates the responsible CUDA/PyTorch source, proposes and applies one targeted optimization, verifies correctness, and benchmarks local (kernel) and end-to-end speedup. Use when asked to optimize a CUDA kernel, analyze gpa.advice output, or investigate a GPU performance regression in this repo.
+description: Analyzes GPA (GPU Performance Advisor) gpa.advice profiler output, locates the responsible CUDA/PyTorch source, proposes and applies one targeted optimization, verifies correctness, and benchmarks local (kernel) and end-to-end speedup. Use when asked to optimize a CUDA kernel, analyze gpa.advice output, investigate a GPU performance regression, or sweep the optimization loop across every configured benchmark in one session.
 allowed-tools: Read, Edit, Bash, Grep, Glob
 ---
 
@@ -76,6 +76,27 @@ is always rebuilt from it and never hand-edited. If a ledger entry can't be attr
 kernel+optimizer pair (the script logs this to stderr when it happens), or if the index script is
 ever unavailable, fall back to reading `pgo-ledger.md` directly rather than skipping the check.
 
+### 3.5. Consult the cross-benchmark prior
+
+```
+python3 ${CLAUDE_SKILL_DIR}/scripts/build_global_index.py
+python3 ${CLAUDE_SKILL_DIR}/scripts/get_optimizer_prior.py <benchmark>
+```
+
+The first command aggregates all benchmarks' ledger indexes (step 3's per-benchmark view) into
+one cross-benchmark view keyed by optimizer, at `state/global-optimizer-index.json` -- "has
+`GPULoopUnrollOptimizer` worked on any *other* benchmark?", not just this one. It's rebuilt from
+the tracked `pgo-ledger.md` files every time and skips the write when nothing changed, so running
+it is always safe and cheap. The second command joins that against only the optimizers named by
+this benchmark's current top findings and prints a small `priorElsewhere` annotation per
+candidate (`keptCount`/`revertedCount` on *other* benchmarks) -- deliberately excluding this
+benchmark's own history, which step 3 already covers.
+
+Use this to **rank**, not to filter: among findings not already REVERTED on this benchmark (step
+3), prefer one whose optimizer has a strong track record elsewhere. A poor track record elsewhere
+is a reason for caution, not automatic exclusion -- every benchmark's kernel is different, and an
+optimizer that failed once elsewhere can still be the right fix here.
+
 ### 4. Locate and analyze
 
 `Read` the actual source at every `location` cited by the top (not-yet-reverted) finding. Ground
@@ -134,6 +155,38 @@ unavailable, citing `localTimingNote`.
 Summarize for the user: what changed (file:line, one-sentence why), the correctness verdict, the
 measured local (kernel) speedup and end-to-end speedup, and the decision you logged.
 
+## Sweep mode
+
+When asked to run the optimization loop across multiple benchmarks (or "all" of them) in one
+sitting, loop over `assets/benchmarks.json`'s entries in order. For each benchmark:
+
+1. **Check for a cheap exhaustion verdict first, without re-profiling.** If
+   `<benchmark-dir>/gpa-database/profile-summary.json` exists, run steps 3 (ledger index) and 3.5
+   against its *already-cached* findings only -- do not regenerate `gpa.advice` for this check. If
+   every one of those cached top findings is already `REVERTED` on this benchmark, this benchmark
+   is exhausted: skip steps 0-8 entirely, run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/log_sweep_result.py <benchmark> --status exhausted`, and
+   move to the next benchmark. (This verdict is only as fresh as the cached profile-summary.json --
+   if the benchmark's source has changed since it was generated, delete that file to force a real
+   recheck on the next sweep.)
+2. **Otherwise, run the full loop (steps 0-8) normally** for this benchmark, including the fresh
+   profile regeneration step 0 always requires. The Apply step (6) still goes through normal Edit
+   tool approval -- sweep mode does not skip or batch that confirmation, it only automates the
+   deterministic steps around it.
+3. **After step 8's decision is logged to `pgo-ledger.md`**, also record it in the cross-sweep
+   audit trail:
+   ```
+   python3 ${CLAUDE_SKILL_DIR}/scripts/log_sweep_result.py <benchmark> --status attempted \
+       --kernel <kernel> --optimizer <optimizer> --decision <KEPT|REVERTED> \
+       --e2e-speedup <value if PASS, omit if not>
+   ```
+4. Continue to the next benchmark. One optimization attempt per benchmark per sweep, same as the
+   single-benchmark policy in step 8.
+
+At the end, summarize the whole sweep from `state/sweep-log.jsonl` (a `tail -n <count>` of the
+lines just appended) rather than re-reading every benchmark's `pgo-ledger.md` -- that file exists
+specifically so a multi-benchmark run is reviewable in one small pass.
+
 ## Files in this skill
 
 - `scripts/run_gpa_profile.py` — runs the full `hpcrun -> hpcstruct -> hpcprof` pipeline for a
@@ -153,7 +206,22 @@ measured local (kernel) speedup and end-to-end speedup, and the decision you log
   `nsys` for per-kernel time, checks correctness (stdout marker or output-file diff, per
   `assets/benchmarks.json`), and computes speedups. `baseline` captures reference state;
   `compare` measures after a change and updates the ledger.
+- `scripts/build_global_index.py` — aggregates every benchmark's ledger data into one
+  cross-benchmark view keyed by optimizer, at `state/global-optimizer-index.json`. Always fully
+  rebuilt from the tracked `pgo-ledger.md` files (never hand-edited); write is skipped when the
+  combined content hash is unchanged.
+- `scripts/get_optimizer_prior.py` — joins `state/global-optimizer-index.json` against a single
+  benchmark's current top findings, returning a small `priorElsewhere` annotation per candidate
+  (has this optimizer worked on *other* benchmarks?). Depends on both `profile-summary.json` and
+  `state/global-optimizer-index.json` already existing.
+- `scripts/log_sweep_result.py` — appends one compact line to `state/sweep-log.jsonl` per
+  benchmark processed during a sweep (see "Sweep mode" above). Pure append, never rewritten —
+  `pgo-ledger.md` remains the source of truth for the decision itself.
 - `assets/benchmarks.json` — per-benchmark config: directory, build/run commands, correctness
   check mode, target kernel names.
 - `assets/ledger-template.md` — header used when a benchmark's ledger file is created for the
   first time.
+- `state/global-optimizer-index.json` — generated, gitignored (see `state/.gitignore`); rebuild
+  any time with `build_global_index.py`.
+- `state/sweep-log.jsonl` — generated but tracked in git (not regenerable — see
+  `state/.gitignore`); the durable audit trail of every sweep run.
