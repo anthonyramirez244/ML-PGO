@@ -138,21 +138,59 @@ end-to-end and per-kernel speedups, and appends a **facts-only** entry to
 `<benchmark-dir>/gpa-database/pgo-ledger.md` (correctness verdict + measured speedups — no
 judgment call).
 
-**Local (per-kernel) timing is best-effort.** It depends on `nsys` successfully capturing GPU
-kernel activity, which is not guaranteed on every platform (a known limitation on some WSL2/driver
-combinations — see `localTimingNote` in the output). If `kernelSpeedups` comes back empty, do not
-invent a kernel-level number — report end-to-end speedup only and say local timing was
-unavailable, citing `localTimingNote`.
+**Local (per-kernel) timing via nsys is best-effort, and on WSL2 it's usually just broken.**
+`nsys`'s CUPTI Activity kernel-trace capture has a confirmed, still-unresolved gap under WSL2 (NVIDIA
+staff acknowledged this on the developer forums; it slipped several planned releases and is still
+reported broken as of early 2026) — it can fail cleanly (empty `kernelTimesNs`, a `localTimingNote`
+explaining why) or hang until its own 180s timeout, handled the same way either way. If
+`kernelSpeedups` comes back empty, do not invent a kernel-level number — fall back to end-to-end,
+citing `localTimingNote`, and check the next paragraph first.
+
+**Prefer `selfReportedKernelSpeedups` over nsys when a benchmark has one.** Some benchmarks already
+wrap their own kernel launch with `chrono`/`cudaEvent`/`gettimeofday` and print the result — that
+number has nothing to do with nsys and isn't subject to the WSL2 gap at all. `benchmarks.json`'s
+optional `localTiming` list (`{label, regex, unit, occurrence?}` entries) tells `pgo_bench.py` how to
+parse it into `selfReportedKernelTimesNs`/`selfReportedKernelSpeedups`, computed and logged
+alongside `kernelSpeedups` whenever present. Currently configured for huffman, gaussian, lud, srad,
+b+tree, and xsbench — confirmed working end-to-end 2026-07-19 (b+tree's two kernels share an
+identical printed label, disambiguated via `occurrence: 1`/`2`, in call order). bfs, hotspot, kmeans,
+and nw have no self-reported timer in their source (dead/commented-out instrumentation or none at
+all) — for those four, end-to-end remains the only signal unless instrumentation is added. A
+benchmark's `localTiming` labels aren't always 1:1 with individual kernel names — some (e.g.
+gaussian's `Fan1+Fan2 (combined)`) report a total across multiple kernel launches, or (lud's
+`lud_cuda (kernel+memcpy)`) include memory-transfer time alongside the kernel — always read the
+label, don't assume it isolates exactly one kernel's own time.
 
 ### 8. Apply policy, then log your decision
+
+**End-to-end alone is not reliable enough to govern this decision.** Confirmed in both directions
+on 2026-07-19: xsbench's end-to-end showed a 0.951x "regression" that `selfReportedKernelSpeedups`
+proved was actually a 1.000x no-op (nvcc silently declined to unroll a runtime-variable-trip-count
+loop); gaussian's end-to-end showed a 1.018x "improvement" that `selfReportedKernelSpeedups` proved
+was actually a 0.739x kernel-level regression (a redundant-load fix that likely cost more in
+register pressure than it saved). Trusting end-to-end alone would have gotten *both* of those
+backwards. Determine the **governing speedup** with this precedence, per kernel/label you actually
+edited:
+
+1. `selfReportedKernelSpeedups` entry for it, if present.
+2. Else `kernelSpeedups` (nsys) entry for it, if present.
+3. Else `endToEndSpeedup` — and say so explicitly in the ledger (`no kernel-level signal available
+   — decision based on end-to-end only`), since this is the weakest signal, not the default one.
+
+If the matching label is a combined/impure metric (step 7's caveat — e.g. gaussian's
+`Fan1+Fan2 (combined)`, lud's `lud_cuda (kernel+memcpy)`), it still outranks end-to-end, but name it
+as combined/impure in the ledger so a future reader doesn't mistake it for a clean single-kernel
+number.
 
 - If correctness is **FAIL**: revert immediately with `git checkout -- <file>`, then append a line
   to the ledger: `- Decision: REVERTED — correctness failed (<detail>)`. Stop and report. Do not
   retry the same change.
-- If correctness is **PASS** but `endToEndSpeedup < 1.0` (a regression): revert the same way, log
-  `- Decision: REVERTED — regression (Nx end-to-end)`. Stop and report.
-- If correctness is **PASS** and speedup is real: keep the change, log
-  `- Decision: KEPT — <end-to-end and kernel speedup numbers>`.
+- If correctness is **PASS** but the governing speedup is **< 1.0** (a regression): revert the same
+  way, log `- Decision: REVERTED — regression (Nx <governing metric name>)`, even if
+  `endToEndSpeedup` alone would have looked like an improvement (see gaussian's case above). Stop
+  and report.
+- If correctness is **PASS** and the governing speedup is real: keep the change, log
+  `- Decision: KEPT — <governing speedup, plus the other available numbers for context>`.
 - One optimization attempt per invocation unless the user explicitly asks you to continue to the
   next finding. If continuing to the next finding, go back to step 0 — the profile must be
   regenerated against the code as it now stands before picking the next target.
@@ -161,8 +199,9 @@ unavailable, citing `localTimingNote`.
 
 ### 9. Report
 
-Summarize for the user: what changed (file:line, one-sentence why), the correctness verdict, the
-measured local (kernel) speedup and end-to-end speedup, and the decision you logged.
+Summarize for the user: what changed (file:line, one-sentence why), the correctness verdict, which
+speedup governed the decision and why (step 8's precedence), the other available numbers for
+context, and the decision you logged.
 
 ## Sweep mode
 
@@ -212,9 +251,12 @@ specifically so a multi-benchmark run is reviewable in one small pass.
   kernel+optimizer -> KEPT/REVERTED lookup) from `pgo-ledger.md`, keyed by the ledger's content
   hash. Optional accelerant, not a hard dependency — `pgo-ledger.md` remains the source of truth.
 - `scripts/pgo_bench.py` — builds, runs (median of N for end-to-end wall-clock), profiles with
-  `nsys` for per-kernel time, checks correctness (stdout marker or output-file diff, per
-  `assets/benchmarks.json`), and computes speedups. `baseline` captures reference state;
-  `compare` measures after a change and updates the ledger.
+  `nsys` for per-kernel time (best-effort — see the WSL2 caveat in step 7), checks correctness
+  (stdout marker or output-file diff, per `assets/benchmarks.json`), and computes speedups.
+  `baseline` captures reference state; `compare` measures after a change and updates the ledger.
+  Also parses `assets/benchmarks.json`'s optional `localTiming` entries out of the benchmark's own
+  stdout (`parse_local_timing()`) into `selfReportedKernelTimesNs`/`selfReportedKernelSpeedups` —
+  an nsys-independent kernel-timing source for benchmarks that self-report one.
 - `scripts/build_global_index.py` — aggregates every benchmark's ledger data into one
   cross-benchmark view keyed by optimizer, at `state/global-optimizer-index.json`. Always fully
   rebuilt from the tracked `pgo-ledger.md` files (never hand-edited); write is skipped when the

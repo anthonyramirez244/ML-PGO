@@ -10,6 +10,7 @@ optimization. Two subcommands:
 import argparse
 import glob
 import json
+import re
 import shutil
 import sqlite3
 import statistics
@@ -83,6 +84,42 @@ def timed_runs(cfg: dict) -> tuple[float, str]:
     return statistics.median(times), last_stdout
 
 
+def parse_local_timing(cfg: dict, stdout: str) -> dict:
+    """Extract benchmark-self-reported kernel timing from its own stdout, per
+    benchmarks.json's "localTiming" list (each entry: label, regex with one
+    capture group, unit "ms"|"s", optional 1-based "occurrence" for a regex
+    that repeats -- e.g. b+tree's two kernel wrappers print an identical
+    "GPU: KERNEL" label, disambiguated only by which one printed first).
+
+    This exists because nsys's CUPTI Activity API kernel-trace capture is a
+    confirmed, still-unresolved gap under WSL2 (NVIDIA staff acknowledged this
+    on the developer forums; it did not ship in several planned releases and
+    is still reported as broken as of early 2026) -- profile_kernels() above
+    remains best-effort and is still attempted, but for benchmarks whose own
+    source already wraps a kernel launch with std::chrono/cudaEvent/gettimeofday
+    and prints the result, that self-reported number is real device-relevant
+    timing that doesn't depend on nsys at all. Returns {} if the benchmark has
+    no "localTiming" entries or a pattern doesn't match -- never invents a
+    number, and never raises on a missing/unmatched pattern.
+    """
+    results = {}
+    for entry in cfg.get("localTiming", []):
+        occurrence = entry.get("occurrence", 1)
+        matches = list(re.finditer(entry["regex"], stdout))
+        if len(matches) < occurrence:
+            continue
+        value = float(matches[occurrence - 1].group(1))
+        unit = entry["unit"]
+        if unit == "ms":
+            ns = value * 1e6
+        elif unit == "s":
+            ns = value * 1e9
+        else:
+            continue  # unrecognized unit -- skip rather than guess a conversion
+        results[entry["label"]] = ns
+    return results
+
+
 def find_qdstrm_importer() -> str | None:
     path = shutil.which("QdstrmImporter")
     if path:
@@ -109,17 +146,23 @@ def profile_kernels(cfg: dict) -> tuple[dict, str]:
     for p in (qdstrm_path, nsysrep_path, sqlite_path):
         p.unlink(missing_ok=True)
 
+    # errors="replace": nsys's own stdout/stderr has been observed to contain
+    # non-UTF8 bytes on this platform (e.g. progress-bar control sequences) --
+    # without this, a decode failure here raises UnicodeDecodeError, which
+    # isn't caught below and crashes the whole compare, defeating the entire
+    # point of nsys being best-effort. Never let nsys's own instability be
+    # more fatal than "no kernel-level data available."
     profile_cmd = ["nsys", "profile", "--trace=cuda", "-f", "true", "-o", str(report_base)] + cfg["runCmd"]
     try:
-        subprocess.run(profile_cmd, cwd=cfg["path"], capture_output=True, text=True, timeout=180)
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        subprocess.run(profile_cmd, cwd=cfg["path"], capture_output=True, text=True, errors="replace", timeout=180)
+    except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeDecodeError) as e:
         return {}, f"nsys profile failed to run: {e}"
 
     if not nsysrep_path.exists() and qdstrm_path.exists():
         importer = find_qdstrm_importer()
         if not importer:
             return {}, "nsys produced a .qdstrm but no QdstrmImporter binary was found to convert it"
-        subprocess.run([importer, f"--input-file={qdstrm_path}"], capture_output=True, text=True, timeout=180)
+        subprocess.run([importer, f"--input-file={qdstrm_path}"], capture_output=True, text=True, errors="replace", timeout=180)
 
     if not nsysrep_path.exists():
         return {}, "nsys produced no usable report file"
@@ -127,7 +170,7 @@ def profile_kernels(cfg: dict) -> tuple[dict, str]:
     subprocess.run(
         ["nsys", "export", "--type", "sqlite", "--force-overwrite=true",
          "--output", str(sqlite_path), str(nsysrep_path)],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, errors="replace", timeout=180,
     )
     if not sqlite_path.exists():
         return {}, "nsys export did not produce a sqlite file"
@@ -255,10 +298,12 @@ def measure(benchmark: str, is_baseline: bool) -> dict:
             "endToEndSeconds": None,
             "kernelTimesNs": {},
             "localTimingNote": "not profiled — run timed out",
+            "selfReportedKernelTimesNs": {},
             "correctness": "FAIL",
             "correctnessDetail": str(e),
         }
     kernel_times_ns, local_timing_note = profile_kernels(cfg)
+    self_reported_kernel_times_ns = parse_local_timing(cfg, last_stdout)
     correctness, correctness_detail = check_correctness(cfg, gpa_db_dir, is_baseline, last_stdout)
 
     return {
@@ -267,6 +312,7 @@ def measure(benchmark: str, is_baseline: bool) -> dict:
         "endToEndSeconds": end_to_end_seconds,
         "kernelTimesNs": kernel_times_ns,
         "localTimingNote": local_timing_note,
+        "selfReportedKernelTimesNs": self_reported_kernel_times_ns,
         "correctness": correctness,
         "correctnessDetail": correctness_detail,
     }
@@ -318,11 +364,20 @@ def cmd_compare(args):
         if cur_ns:
             kernel_speedups[name] = base_ns / cur_ns
 
+    # baseline.get(...) not baseline[...]: a baseline captured before this field
+    # existed won't have it -- degrade gracefully (empty dict) rather than KeyError.
+    self_reported_speedups = {}
+    for name, base_ns in baseline.get("selfReportedKernelTimesNs", {}).items():
+        cur_ns = current["selfReportedKernelTimesNs"].get(name)
+        if cur_ns:
+            self_reported_speedups[name] = base_ns / cur_ns
+
     result = {
         **current,
         "baselineEndToEndSeconds": baseline["endToEndSeconds"],
         "endToEndSpeedup": end_to_end_speedup,
         "kernelSpeedups": kernel_speedups,
+        "selfReportedKernelSpeedups": self_reported_speedups,
     }
     print(json.dumps(result, indent=2))
 
@@ -337,7 +392,14 @@ def cmd_compare(args):
                 f"- Kernel {name}: {baseline['kernelTimesNs'][name]:.0f}ns -> {current['kernelTimesNs'][name]:.0f}ns ({speedup:.3f}x)"
             )
     else:
-        entry_lines.append(f"- Local kernel timing: unavailable ({current['localTimingNote']})")
+        entry_lines.append(f"- Local kernel timing (nsys): unavailable ({current['localTimingNote']})")
+    if self_reported_speedups:
+        baseline_self_ns = baseline["selfReportedKernelTimesNs"]
+        for name, speedup in self_reported_speedups.items():
+            entry_lines.append(
+                f"- Self-reported kernel timing {name}: {baseline_self_ns[name]:.0f}ns -> "
+                f"{current['selfReportedKernelTimesNs'][name]:.0f}ns ({speedup:.3f}x)"
+            )
     with ledger_path.open("a") as f:
         f.write("\n".join(entry_lines) + "\n")
     print(f"\nLedger updated at {ledger_path} (facts only — agent must append its KEPT/REVERTED decision)", file=sys.stderr)

@@ -22,7 +22,10 @@
       "failPattern": "FAIL! vectors are NOT matching!"
     },
     "kernels": ["vlc_encode_kernel_sm64huff"],
-    "sourceFiles": ["vlc_kernel_sm64huff.cu"]
+    "sourceFiles": ["vlc_kernel_sm64huff.cu"],
+    "localTiming": [
+      {"label": "vlc_encode_kernel_sm64huff", "regex": "GPU Encoding time \\(SM64HUFF\\): ([0-9.]+) \\(ms\\)", "unit": "ms"}
+    ]
   },
   "gaussian": {
     "dir": "GPA-Benchmark/rodinia/gaussian",
@@ -34,7 +37,10 @@
       "ignorePatterns": ["Time total", "Time for CUDA kernels"]
     },
     "kernels": ["Fan1(", "Fan2("],
-    "sourceFiles": ["gaussian.cu"]
+    "sourceFiles": ["gaussian.cu"],
+    "localTiming": [
+      {"label": "Fan1+Fan2 (combined)", "regex": "Time for CUDA kernels:\\s*([0-9.]+) sec", "unit": "s"}
+    ]
   },
   "hotspot": {
     "dir": "GPA-Benchmark/rodinia/hotspot",
@@ -70,7 +76,10 @@
       "ignorePatterns": ["Time consumed"]
     },
     "kernels": ["lud_diagonal", "lud_perimeter", "lud_internal"],
-    "sourceFiles": ["cuda/lud_kernel.cu"]
+    "sourceFiles": ["cuda/lud_kernel.cu"],
+    "localTiming": [
+      {"label": "lud_cuda (kernel+memcpy)", "regex": "Time consumed\\(ms\\): ([0-9.]+)", "unit": "ms"}
+    ]
   },
   "nw": {
     "dir": "GPA-Benchmark/rodinia/nw",
@@ -94,7 +103,12 @@
       "outputFile": "image_out.pgm"
     },
     "kernels": ["srad", "srad2", "extract", "prepare", "reduce", "compress"],
-    "sourceFiles": ["srad_kernel.cu"]
+    "sourceFiles": ["srad_kernel.cu"],
+    "localTiming": [
+      {"label": "extract", "regex": "([0-9.]+) s,\\s*[0-9.]+ % : EXTRACT IMAGE", "unit": "s"},
+      {"label": "srad+srad2+prepare+reduce (combined COMPUTE stage)", "regex": "([0-9.]+) s,\\s*[0-9.]+ % : COMPUTE", "unit": "s"},
+      {"label": "compress", "regex": "([0-9.]+) s,\\s*[0-9.]+ % : COMPRESS IMAGE", "unit": "s"}
+    ]
   },
   "b+tree": {
     "dir": "GPA-Benchmark/rodinia/b+tree",
@@ -106,7 +120,11 @@
       "outputFile": "output.txt"
     },
     "kernels": ["findK", "findRangeK"],
-    "sourceFiles": ["kernel/kernel_gpu_cuda.cu", "kernel/kernel_gpu_cuda_2.cu"]
+    "sourceFiles": ["kernel/kernel_gpu_cuda.cu", "kernel/kernel_gpu_cuda_2.cu"],
+    "localTiming": [
+      {"label": "findK", "regex": "([0-9.]+) s,\\s*[0-9.]+ % : GPU: KERNEL", "unit": "s", "occurrence": 1},
+      {"label": "findRangeK", "regex": "([0-9.]+) s,\\s*[0-9.]+ % : GPU: KERNEL", "unit": "s", "occurrence": 2}
+    ]
   },
   "xsbench": {
     "dir": "GPA-Benchmark/xsbench",
@@ -119,6 +137,9 @@
       "failPattern": "INVALID CHECKSUM"
     },
     "kernels": ["lookup"],
-    "sourceFiles": ["Simulation.cu"]
+    "sourceFiles": ["Simulation.cu"],
+    "localTiming": [
+      {"label": "lookup", "regex": "Average kernel execution time: ([0-9.]+) seconds", "unit": "s"}
+    ]
   }
 }
