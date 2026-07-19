@@ -116,7 +116,16 @@ git status --porcelain -- <file>
 ```
 
 If it's not empty (uncommitted changes already present), STOP and tell the user — do not edit on
-top of unknown existing changes. Otherwise make the change with `Edit`.
+top of unknown existing changes. **Exception:** on a benchmark's very first-ever attempt right
+after onboarding, `??` (untracked) is expected if the vendored source hasn't been committed yet —
+that's your own just-added file, not unknown prior work, so it's safe to proceed. But note this
+for step 8: `git checkout -- <file>` only works on a *tracked* file, and does nothing (silently
+errors) on one that's still untracked. Commit the untouched vendored source in its own commit
+*before* attempting the first optimization on a new benchmark, so step 8's revert path always has
+something real to check out against — if you skip that and end up REVERTED on an untracked file
+anyway, restore it by hand (re-copy from the original source, or manually undo the exact edit) and
+verify the result matches the pre-edit content before moving on. Otherwise make the change with
+`Edit`.
 
 ### 7. Verify correctness and benchmark
 

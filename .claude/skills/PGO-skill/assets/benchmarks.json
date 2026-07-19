@@ -107,5 +107,18 @@
     },
     "kernels": ["findK", "findRangeK"],
     "sourceFiles": ["kernel/kernel_gpu_cuda.cu", "kernel/kernel_gpu_cuda_2.cu"]
+  },
+  "xsbench": {
+    "dir": "GPA-Benchmark/xsbench",
+    "buildCmd": ["make"],
+    "runCmd": ["./main", "-s", "small", "-m", "event", "-r", "3"],
+    "runs": 3,
+    "correctness": {
+      "mode": "stdout-marker",
+      "passPattern": "(Valid)",
+      "failPattern": "INVALID CHECKSUM"
+    },
+    "kernels": ["lookup"],
+    "sourceFiles": ["Simulation.cu"]
   }
 }
